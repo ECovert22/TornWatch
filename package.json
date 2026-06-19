@@ -1,0 +1,29 @@
+{
+  "name": "tornwatch",
+  "version": "1.0.0",
+  "description": "A background service that watches a Torn City Character and Faction. There are several key features, with a focus on the market, chain and faction management during wars. Using Temporal for guaranteed service throughout long hours and unpredictable players.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsc",
+    "worker": "ts-node src/worker.ts",
+    "run-workflow": "ts-node src/client.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@temporalio/activity": "^1.18.1",
+    "@temporalio/client": "^1.18.1",
+    "@temporalio/worker": "^1.18.1",
+    "@temporalio/workflow": "^1.18.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
