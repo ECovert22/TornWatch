@@ -1,4 +1,5 @@
 // client.ts
+import "dotenv/config";
 
 import { Connection, Client } from "@temporalio/client";
 import { getUserBasicWorkflow } from "./workflows";
