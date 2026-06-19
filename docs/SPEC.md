@@ -2,7 +2,7 @@
 
 **A Durable, Temporal-Powered Monitoring & War-Support Toolkit for Torn City**
 
-*Project Specification — Version 0.2 (Draft for review)*
+*Project Specification — Version 0.3 (Draft for review)*
 
 ---
 
@@ -167,7 +167,35 @@ A key open design question was whether a hit landed outside the normal rotation 
 >
 > The right reset behavior may depend on factors like how many enemy targets are currently available (not hospitalized, not traveling) versus how many players are waiting in the queue. A future version should make this behavior dynamic or at least configurable — for example, a toggle accessible through a Discord command or a future web dashboard — rather than a single hardcoded rule. This is intentionally deferred past v1.
 
-### 5.2.4 Temporal design notes
+### 5.2.4 Target assignment (war mode)
+
+Suggesting which enemy target a player should hit next is, in its full generality, a dynamic matching problem: each available hitter should be paired with a good available target, but both sides of that pairing change continuously as targets leave hospital, travel, or get hit by someone else, and as hitters join, leave, or finish their turn. Exactly optimal assignment under those constraints is computationally hard to solve fresh on every change; a greedy approach — assign the best currently-available target to the next hitter, recomputed each time state changes — is intentionally chosen as a good-enough heuristic rather than an exact solver, since the underlying data is changing faster than an expensive optimal solution would stay valid anyway.
+
+- Target stat estimates are sourced from FFScouter (see 5.2.6) rather than built from scratch.
+
+- Open question: how long should a player be given to take their turn before being skipped or re-prompted? This likely needs to flex based on how many suitable targets are currently available — a deep target pool can afford short turns; a shallow one may need longer waits for a target to free up. Deferred to detailed design in Phase 2/4.
+
+- Open question: the enemy faction may log on and actively counter-attack to disrupt the chain (hospitalizing your hitters, contesting targets). The matching and turn-timing logic should be aware this is an adversarial, not just a logistics, problem. Deferred to detailed design in Phase 2/4.
+
+### 5.2.5 Non-war (energy management) mode
+
+A simpler chain mode for chains run outside of faction war — for example, a casual or training chain where the goal is simply to keep the chain alive as long as possible so more faction members have a chance to join in, rather than to coordinate against a specific enemy faction.
+
+- Still uses the join/leave queue and FCFS ordering from 5.2.1 — but the goal the queue serves is different: pacing hits against players' energy regeneration to keep the chain alive longer, not coordinating target quality or countering an enemy.
+
+- No targets are assigned and no Chain Leader role exists in this mode — there's no enemy faction to hospitalize.
+
+- This is a strict subset of the war-mode Workflow logic (same queue/Signal/Timer mechanics, fewer features active), not a separate system — implementation should reuse the same Chain Watcher Workflow with a mode flag, rather than duplicating logic.
+
+### 5.2.6 FFScouter integration
+
+FFScouter is a free, established third-party tool that estimates a player's battle stats from their public Fair Fight history, and exposes this through its own documented API, separate from Torn's official API. Rather than building stat estimation from scratch, target-quality features (target suggestions in war mode, and the War/Hit-Quality Tracker in 5.4) should treat FFScouter as an external data source, the same way Torn's own API is treated.
+
+- FFScouter requires registering a Torn API key with their service and exposes endpoints including a target-finder optimized for fair-fight range and respect gain, and a real-time "War Room" feature for monitoring enemy faction members during wars.
+
+- Using FFScouter introduces a second third-party dependency and a second rate limit/availability profile to design Activities and retries around, distinct from Torn's own.
+
+### 5.2.7 Temporal design notes
 
 - The queue, the Chain Leader set, and the countdown deadline are all state held inside a single Chain Watcher Workflow Execution per active chain — not a separate database — since this state only needs to exist while the chain is active.
 
@@ -256,6 +284,8 @@ Build the full feature described in section 5.1: per-character Workflow tracking
 
 Build the Chain Watcher Workflow described in section 5.2 — the queue, the Chain Leader track, and the shared countdown Timer — using simple polling of Torn's faction attack/news log to detect hits, before the Discord bot exists. This proves the state machine and Signal/Query logic in isolation.
 
+- Recommended build order: implement non-war (energy management) mode first, since it's a strict subset of war mode with no target assignment or Chain Leader logic — then layer war mode's target suggestions and Chain Leader track on top of the same Workflow.
+
 ## Phase 2.5 — Discord Bot Integration
 
 Build the bot described in section 6: queue join/leave/hit-reporting commands, Chain Leader self-declaration, turn notifications, and personal timer notifications migrating from webhook to bot. This replaces Phase 2's polling-based hit detection with real-time Signals from Discord, and resolves the Discord-to-Torn-identity linking question.
@@ -327,6 +357,10 @@ tornwatch/
 | 3 | Discord-to-Torn identity linking | Needs a one-time link command; security/verification approach to be designed in Phase 2.5. |
 | 4 | API key and bot token storage | Local .env file, gitignored, never committed or logged in plaintext; GitHub Actions secrets if CI is added later. |
 | 5 | Is a database needed? | Not for Phases 0–4 — Temporal's Event History covers Workflow state. Revisit only if the dashboard needs historical reporting beyond what a Query can expose live. |
+| 6 | Optimal target/hitter matching is computationally hard in the general case | A greedy, recomputed-on-change heuristic is the intentional v1 approach rather than an exact solver, since target/hitter availability changes faster than an expensive optimal solution would stay valid. |
+| 7 | How long should a player be given to take their turn before being skipped? | Likely needs to flex with target pool depth; not yet designed in detail. Deferred to Phase 2/4. |
+| 8 | Enemy faction actively countering the chain (hospitalizing hitters, contesting targets) | Matching/turn-timing logic needs to treat this as adversarial, not just logistical. Deferred to Phase 2/4. |
+| 9 | Dependency on FFScouter (third-party, not Torn-official) for stat estimates | Accepted trade-off to avoid rebuilding stat estimation from scratch; introduces a second external rate limit/availability profile to design around. |
 
 # 12. Immediate Next Steps
 
