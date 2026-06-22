@@ -2,7 +2,7 @@
 
 **A Durable, Temporal-Powered Monitoring & War-Support Toolkit for Torn City**
 
-*Project Specification — Version 0.3 (Draft for review)*
+*Project Specification — Version 0.4 (Draft for review)*
 
 ---
 
@@ -22,8 +22,9 @@
 8. [Tech Stack](#8-tech-stack)
 9. [Suggested Project Structure](#9-suggested-project-structure)
 10. [Torn API Reference Notes](#10-torn-api-reference-notes)
-11. [Risks & Open Questions](#11-risks--open-questions)
-12. [Immediate Next Steps](#12-immediate-next-steps)
+11. [External Dependency Watch](#11-external-dependency-watch)
+12. [Risks & Open Questions](#12-risks--open-questions)
+13. [Immediate Next Steps](#13-immediate-next-steps)
 
 ---
 
@@ -117,19 +118,47 @@ Tracks a player's personal time-sensitive stats and notifies them (via Discord) 
 
 ### Tracked signals
 
-- Energy and nerve bars reaching full (or a configurable threshold).
+- Energy and nerve bars reaching full.
 
 - Travel timer landing.
 
-- Drug cooldown expiring (and other addiction-related cooldowns Torn tracks).
-
-- Hospital and jail release timers.
+- Drug, medical, and booster cooldowns expiring.
 
 - Any other periodic bar/cooldown the Torn API exposes that the player wants to track — designed as a configurable list, not a hardcoded set, so new stats can be added without code changes.
 
-### Behavior
+### 5.1.1 Core loop behavior
 
-One Workflow Execution per tracked character. Rather than polling constantly, the Workflow computes the next relevant wake time across all tracked stats and sleeps using a durable Timer until then, waking early only if a Signal (e.g. a config change) arrives first.
+One Workflow Execution per tracked character. Rather than polling constantly, the Workflow alternates between two kinds of waiting:
+
+- Most of the time: wait for whichever tracked stat is soonest to become ready, OR for a Signal indicating something changed (e.g. the player trained, spending energy) — whichever happens first.
+
+- If a Signal wins that race: rather than immediately re-fetching from Torn, the Workflow debounces — it waits for a short quiet period (e.g. 60 seconds with no further Signals) before actually re-fetching, since game actions like repeated gym training can fire many Signals in quick succession and an immediate re-fetch per Signal would be wasteful. Only once Signals stop arriving does the Workflow fetch fresh data and recalculate.
+
+### 5.1.2 Edge-triggered notifications (avoiding duplicate alerts)
+
+A stat being "ready" (e.g. energy already full) is a sustained condition, not a one-time event — if notifications fired every time the Workflow checked and found a stat still at zero seconds remaining, the player would be spammed repeatedly for something they haven't acted on yet.
+
+- The Workflow only notifies on a transition from "not ready" to "ready" for a given stat, compared against that stat's previous fetch result — not on every fetch where the stat happens to still be ready.
+
+- Once notified, that stat is marked as already-announced and won't notify again until it's observed to go back to "not ready" (the player actually used it, starting a new countdown) and then becomes ready again.
+
+- On the very first fetch when tracking begins, a stat that's already ready is treated like any other transition and does notify immediately, rather than being silently treated as a baseline — simpler to reason about, and revisit later only if this proves noisy in practice.
+
+### 5.1.3 Travel bundling (current rules, June 2026)
+
+Most actions — training, taking drugs, using cooldown-driven items — are not currently possible while a player is traveling or abroad; the relevant game screens are inaccessible until landing. This means individual notifications for energy, nerve, or cooldowns becoming ready mid-flight are not actionable and would just be noise.
+
+- While the player is traveling, the Workflow's primary wait target becomes the travel arrival time, not the soonest of all tracked stats.
+
+- Energy, nerve, and cooldown readiness are still tracked quietly in the background during the flight, but individual notifications for them are suppressed while traveling.
+
+- The drug cooldown specifically is still announced as it becomes ready during travel, separately from the on-landing summary, since knowing a drug is off cooldown can matter for planning even before landing.
+
+- The moment travel ends, the Workflow sends one consolidated landing notification listing whichever other stats (energy, nerve, cooldowns) became ready during the flight, then resumes normal independent edge-triggered notifications going forward.
+
+> **Known near-term risk — Travelling 2.0**
+>
+> Torn announced a major travel system overhaul ("Travelling 2.0") with Phase 2 shipping June 23, 2026, introducing a Travel Inventory that allows some item use abroad (e.g. Xanax usable immediately upon purchase in the UK, South Africa, and Japan), with further phases (including weapons/armor) expected to follow, targeted before Halloween 2026. The travel-bundling behavior in this section is built against the rules as of June 2026 and is expected to need revision once Phase 2 ships and the picture becomes clearer with Phase 3. This is a deliberate, accepted v1 simplifying assumption with a known expiration date, not a permanent design choice.
 
 ## 5.2 Faction Chain Watcher
 
@@ -272,13 +301,19 @@ Prove the Worker, Temporal Service, and Client wiring works end-to-end against a
 
 ## Phase 1 — Personal Timer Notifications
 
-Build the full feature described in section 5.1: per-character Workflow tracking energy, nerve, travel, drug cooldown, and similar timers, sleeping via durable Timers and notifying through a simple channel (Discord webhook is the simplest starting point before the full bot exists).
+Build the core loop described in section 5.1.1–5.1.2: per-character Workflow tracking energy, nerve, travel, and cooldowns, using the soonest-event-or-Signal race and debounce pattern, with edge-triggered notifications through a simple channel (Discord webhook is the simplest starting point before the full bot exists).
 
 - A real Retry Policy tuned to Torn's documented error codes — rate-limit and transient errors retry with backoff; invalid-key errors do not retry endlessly.
 
 > **Suggested chaos test**
 >
 > Kill the Worker process while a Workflow is mid-sleep, then restart it. Confirm the Workflow resumes and still fires the notification at the correct original time.
+
+## Phase 1.5 — Travel Bundling
+
+Add the travel-aware behavior described in section 5.1.3 on top of the working Phase 1 loop: switching the Workflow's primary wait target to travel arrival time while traveling, suppressing individual notifications for non-actionable stats during the flight (except drug cooldown), and sending one consolidated notification on landing.
+
+- Deliberately built against current (June 2026) travel rules; flagged for revisit once Travelling 2.0's later phases ship (see callout in 5.1.3).
 
 ## Phase 2 — Chain Watcher (core logic, polling-based)
 
@@ -348,7 +383,18 @@ tornwatch/
 | Faction-wide efficiency | Prefer one faction-wide endpoint call over iterating individual member calls where possible, to conserve the shared request budget during fan-out. |
 | ToS posture | API is explicitly intended to be read-only/informational. Storing another player's key requires clear disclosure of what's stored and why. |
 
-# 11. Risks & Open Questions
+# 11. External Dependency Watch
+
+Torn City is a live, actively-developed game, and some design decisions in this spec are deliberately built against the rules as they exist today rather than trying to anticipate every future change. This section tracks known upcoming changes that could invalidate current assumptions, so they don't get forgotten.
+
+| **Change** | **Status / timeline** | **What it affects here** |
+| --- | --- | --- |
+| Travelling 2.0, Phase 2 (Travel Inventory) | Ships June 23, 2026. Allows some item use abroad — e.g. Xanax usable immediately upon purchase in the UK, South Africa, and Japan; alcohol and clothing also become usable abroad. | Directly affects section 5.1.3's travel-bundling assumption that nothing is actionable mid-flight/abroad. Once live, drug-cooldown handling abroad in those specific countries may need to change from "announce on landing" to "announce immediately, since it may now be usable." |
+| Travelling 2.0, Phase 3 (weapons & armor return) | No firm date; targeted before Halloween 2026. | Lower relevance to TornWatch's current feature set (no combat-loadout tracking planned), but worth re-checking once it ships in case it changes other travel-related API fields. |
+
+*Revisit this table after each listed change ships, and update section 5.1.3 and the Risks table accordingly rather than letting the spec silently go stale.*
+
+# 12. Risks & Open Questions
 
 | **#** | **Question / Risk** | **Current thinking** |
 | --- | --- | --- |
@@ -361,8 +407,9 @@ tornwatch/
 | 7 | How long should a player be given to take their turn before being skipped? | Likely needs to flex with target pool depth; not yet designed in detail. Deferred to Phase 2/4. |
 | 8 | Enemy faction actively countering the chain (hospitalizing hitters, contesting targets) | Matching/turn-timing logic needs to treat this as adversarial, not just logistical. Deferred to Phase 2/4. |
 | 9 | Dependency on FFScouter (third-party, not Torn-official) for stat estimates | Accepted trade-off to avoid rebuilding stat estimation from scratch; introduces a second external rate limit/availability profile to design around. |
+| 10 | Travelling 2.0 may invalidate the travel-bundling assumption in 5.1.3 | Deliberately deferred; tracked in section 11 (External Dependency Watch) with a concrete re-check trigger date. |
 
-# 12. Immediate Next Steps
+# 13. Immediate Next Steps
 
 - Review this spec and adjust phase order/scope as needed — nothing here is final.
 
