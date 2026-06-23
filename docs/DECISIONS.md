@@ -17,3 +17,27 @@ A running log of notable technical decisions, trade-offs, and judgment calls mad
 **Decision:** Did not run `npm audit fix --force`. The resolved protobufjs version already appears to be patched against the most serious known issue, and the remaining flagged advisories require processing untrusted/malicious protobuf payloads from an external source — this project's Worker only talks to a local Temporal dev server and the official Torn API, neither of which is an untrusted input vector in this sense. Forcing the suggested upgrade risked breaking compatibility with the Temporal SDK version this project is built against, for no clear security benefit in this context.
 
 **Will revisit if:** Temporal's SDK releases an official patched version without a breaking change, or this project's threat model changes (e.g. if it ever accepts protobuf data from a source outside Temporal/Torn).
+
+---
+
+## 2026-06-22 — Debounce vs. throttle for Signal-triggered Torn API re-fetches
+
+**Context:** Personal timer Workflow (Phase 1) needs to re-fetch from Torn's API when a Signal indicates something changed (e.g. player trained), but rapid bursts of Signals (e.g. spamming the gym button) shouldn't each trigger a separate fetch.
+
+**Options considered:**
+- Throttle: act on the first Signal in a burst, ignore the rest for a cooldown window.
+- Debounce: restart a short countdown on every Signal, only fetch once the countdown finishes uninterrupted.
+
+**Decision:** Debounce. Throttling would capture a snapshot near the start of a burst that goes stale almost immediately if the burst continues; debouncing waits for input to actually settle before doing the one real fetch that matters. Chosen 60-second debounce window, revisit if it proves too slow/fast in practice.
+
+**Will revisit if:** real usage shows 60 seconds feels wrong, or if a stat needs faster reaction than that allows.
+
+---
+
+## 2026-06-22 — Travel-bundling built against current (pre-Travelling 2.0) rules
+
+**Context:** Torn announced "Travelling 2.0" Phase 2 shipping June 23, 2026, which allows some item use abroad (e.g. Xanax in UK/South Africa/Japan) — directly relevant to Phase 1.5's assumption that nothing is actionable while traveling.
+
+**Decision:** Build Phase 1.5 against today's rules rather than trying to anticipate the patch. Tracked explicitly in SPEC.md section 11 (External Dependency Watch) with a concrete re-check trigger (the patch's ship date) rather than left as an implicit assumption.
+
+**Will revisit if:** Travelling 2.0 Phase 2 ships and changes drug-cooldown-while-traveling behavior in supported countries.

@@ -32,3 +32,52 @@ export async function fetchUserBasic(apiKey: string): Promise<TornUserBasic> {
 
   return data;
 }
+
+
+interface TornBar {
+  current: number;
+  maximum: number;
+  increment: number;
+  interval: number;
+  tick_time: number;
+  full_time: number;
+}
+
+interface TornTravel {
+  destination: string;
+  method: string;
+  departed_at: number;
+  arrival_at: number;
+  time_left: number;
+}
+
+interface TornCooldowns {
+  drug: number;
+  medical: number;
+  booster: number;
+}
+
+interface TornBarsTravelCooldowns {
+  bars: {
+    energy: TornBar;
+    nerve: TornBar;
+  };
+  travel: TornTravel;
+  cooldowns: TornCooldowns;
+}
+
+
+export async function fetchUpcomingEvents(
+  apiKey: string
+): Promise<TornBarsTravelCooldowns> {
+  const url = `${TORN_API_BASE}/user?selections=bars,travel,cooldowns&key=${apiKey}`;
+
+  const response = await fetch(url);
+  const data = (await response.json()) as TornBarsTravelCooldowns | TornApiError;
+
+  if ("error" in data) {
+    throw new Error(`Torn API error ${data.error.code}: ${data.error.error}`);
+  }
+
+  return data;
+}
