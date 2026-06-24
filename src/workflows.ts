@@ -16,15 +16,7 @@ const { fetchUpcomingEvents } = proxyActivities<typeof activities>({
 export async function characterMonitorWorkflow(apiKey: string) {
   let changed = false;
 
-  // FUTURE: the signal currently carries no information about WHAT changed,
-  // so the loop notifies based only on observed values. This means a
-  // player-initiated change (e.g. taking a Xanax fills energy -> full_time 0)
-  // triggers a "energy is ready!" notification even though the player just
-  // caused it themselves and already knows. Not a correctness bug (energy IS
-  // ready), just noise. Eventual fix: have the signal carry what action
-  // occurred, so player-initiated fills can be suppressed while natural
-  // countdown-completions still notify. Connects to the deferred "signals
-  // carry payload" decision in the spec.
+
   setHandler(somethingChangedSignal, () => {
     changed = true;
   });
@@ -67,9 +59,10 @@ export async function characterMonitorWorkflow(apiKey: string) {
       // THE RACE: wake when the signal flips `changed` first, OR when
       // `soonest` seconds elapse — whichever happens first.
       let wokenBySignal = await condition(() => changed, `${soonest} seconds`);
+
       while (wokenBySignal) {
         changed = false;
-        wokenBySignal = await condition(() => changed, "60 seconds");
+        wokenBySignal = await condition(() => changed, `60 seconds`);
       }
       // if the timeout fired instead, we just loop -> re-fetch -> the
       // now-ready stat gets caught by the notification block at the top.
