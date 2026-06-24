@@ -24,17 +24,36 @@ export async function characterMonitorWorkflow(apiKey: string) {
 
   const notified = new Set<string>();
 
+  const readyDuringFlight = new Set<string>();
+
   while (true) {
     const events = await fetchUpcomingEvents(apiKey);
 
+
+    // FUTURE: on landing, the travel stat fires its own "travel is ready"
+    // notification AND the landing summary fires — two messages for one event.
+    // Acceptable while these are console.logs; clean up when the real
+    // notification layer exists (likely suppress the standalone travel
+    // notification when a landing summary will cover it).
+    const travelEvent = events.find((e) => e.name === "travel");
+    const isTraveling = travelEvent !== undefined && travelEvent.secondsUntil > 0;
+
     // --- Decide notifications for this snapshot ---
-    // Single source of truth for "what gets notified": no matter why we woke
-    // up (timer, signal, or first run), every path arrives here.
     for (const event of events) {
       if (event.secondsUntil === 0) {
         if (!notified.has(event.name)) {
-          // transition INTO ready -> notify once, then remember
-          console.log(`NOTIFY: ${event.name} is ready!`); // real notification activity goes here later
+
+          
+          const suppressedByTravel =
+            isTraveling && event.name !== "travel" && event.name !== "drug";
+          
+            // transition INTO ready -> notify once, or wait for travel, then remember
+          if (suppressedByTravel) {
+            readyDuringFlight.add(event.name);
+          } else {
+            console.log(`NOTIFY: ${event.name} is ready!`); // real notification activity goes here later
+          }
+          
           notified.add(event.name);
         }
         // else: already ready and already notified -> stay quiet
@@ -42,6 +61,12 @@ export async function characterMonitorWorkflow(apiKey: string) {
         // counting down again -> clear memory so it can notify next time
         notified.delete(event.name);
       }
+    }
+    // detects when we landed, then 
+    if (!isTraveling && readyDuringFlight.size > 0) {
+      const landed = Array.from(readyDuringFlight).join(", ");
+      console.log(`NOTIFY: Landed! While flying, these became ready: ${landed}`);
+      readyDuringFlight.clear();
     }
 
     // --- Decide how long to wait ---
