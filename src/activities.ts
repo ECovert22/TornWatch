@@ -66,10 +66,14 @@ interface TornBarsTravelCooldowns {
   cooldowns: TornCooldowns;
 }
 
+export interface UpcomingEvent {
+  name: string;        // e.g. "energy", "nerve", "travel", "drug"
+  secondsUntil: number;
+}
 
 export async function fetchUpcomingEvents(
   apiKey: string
-): Promise<TornBarsTravelCooldowns> {
+): Promise<UpcomingEvent[]> {
   const url = `${TORN_API_BASE}/user?selections=bars,travel,cooldowns&key=${apiKey}`;
 
   const response = await fetch(url);
@@ -79,5 +83,17 @@ export async function fetchUpcomingEvents(
     throw new Error(`Torn API error ${data.error.code}: ${data.error.error}`);
   }
 
-  return data;
+  // Each data type given by the API is slightly different, here we translate it
+  // everything downstream just sees uniform {name, secondsUntil}.
+  const events: UpcomingEvent[] = [
+    { name: "energy", secondsUntil: data.bars.energy.full_time },
+    { name: "nerve", secondsUntil: data.bars.nerve.full_time },
+    { name: "travel", secondsUntil: data.travel.time_left },
+    { name: "drug", secondsUntil: data.cooldowns.drug },
+    { name: "medical", secondsUntil: data.cooldowns.medical },
+    { name: "booster", secondsUntil: data.cooldowns.booster },
+  ];
+
+  return events;
 }
+
