@@ -2,7 +2,7 @@
 import "dotenv/config";
 
 import { Connection, Client } from "@temporalio/client";
-import { getUserBasicWorkflow } from "./workflows";
+import { characterMonitorWorkflow } from "./workflows";
 
 async function run() {
   const apiKey = process.env.TORN_API_KEY;
@@ -13,16 +13,15 @@ async function run() {
   const connection = await Connection.connect({ address: "localhost:7233" });
   const client = new Client({ connection });
 
-  const handle = await client.workflow.start(getUserBasicWorkflow, {
+  const handle = await client.workflow.start(characterMonitorWorkflow, {
     args: [apiKey],
     taskQueue: "tornwatch",
-    workflowId: `get-user-basic-${Date.now()}`,
+    workflowId: `character-monitor-${Date.now()}`,
   });
 
   console.log(`Started workflow ${handle.workflowId}`);
 
-  const result = await handle.result();
-  console.log("Workflow result:", result);
+ 
 }
 
 run().catch((err) => {
