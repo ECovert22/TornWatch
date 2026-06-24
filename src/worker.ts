@@ -2,6 +2,7 @@
 //
 // The Worker connects to the Temporal Service, polls for work, and executes
 // our Workflow and Activity code.
+import "dotenv/config";
 
 import { Worker } from "@temporalio/worker";
 import * as activities from "./activities";

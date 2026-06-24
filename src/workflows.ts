@@ -3,7 +3,7 @@ import type * as activities from "./activities";
 
 const somethingChangedSignal = defineSignal<[]>("somethingChanged");
 
-const { fetchUpcomingEvents } = proxyActivities<typeof activities>({
+const { fetchUpcomingEvents, sendNotification } = proxyActivities<typeof activities>({
   startToCloseTimeout: "30 seconds",
   retry: {
     initialInterval: "2 seconds",
@@ -51,7 +51,7 @@ export async function characterMonitorWorkflow(apiKey: string) {
           if (suppressedByTravel) {
             readyDuringFlight.add(event.name);
           } else {
-            console.log(`NOTIFY: ${event.name} is ready!`); // real notification activity goes here later
+            await sendNotification(`NOTIFY: ${event.name} is ready!`); // real notification activity goes here later
           }
           
           notified.add(event.name);
@@ -65,7 +65,7 @@ export async function characterMonitorWorkflow(apiKey: string) {
     // detects when we landed, then 
     if (!isTraveling && readyDuringFlight.size > 0) {
       const landed = Array.from(readyDuringFlight).join(", ");
-      console.log(`NOTIFY: Landed! While flying, these became ready: ${landed}`);
+      await sendNotification(`NOTIFY: Landed! While flying, these became ready: ${landed}`);
       readyDuringFlight.clear();
     }
 
