@@ -66,10 +66,10 @@ export async function characterMonitorWorkflow(apiKey: string) {
       const soonest = Math.min(...countingDown.map((e) => e.secondsUntil));
       // THE RACE: wake when the signal flips `changed` first, OR when
       // `soonest` seconds elapse — whichever happens first.
-      const wokenBySignal = await condition(() => changed, `${soonest} seconds`);
-      if (wokenBySignal) {
+      let wokenBySignal = await condition(() => changed, `${soonest} seconds`);
+      while (wokenBySignal) {
         changed = false;
-        // (debounce logic will go here in a later step)
+        wokenBySignal = await condition(() => changed, "60 seconds");
       }
       // if the timeout fired instead, we just loop -> re-fetch -> the
       // now-ready stat gets caught by the notification block at the top.
