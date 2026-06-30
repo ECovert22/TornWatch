@@ -2,7 +2,7 @@
 
 **A Durable, Temporal-Powered Monitoring & War-Support Toolkit for Torn City**
 
-*Project Specification — Version 0.4 (Draft for review)*
+*Project Specification — Version 0.5 (Draft for review)*
 
 ---
 
@@ -110,6 +110,20 @@ At a high level, TornWatch consists of these moving pieces:
 
 Unlike a typical web server that must scale horizontally under load, TornWatch's Worker only needs to keep up with a handful of Workflows (one per tracked character, one per active chain, one per faction). A single Worker process is sufficient for the entire project's scope, including the faction fan-out phase.
 
+## 4.2 Core architectural principle: polling is the foundation, signals are an optimization
+
+Torn's API is strictly pull-based: there are no webhooks, no events, no websockets, no push of any kind. Torn never proactively tells TornWatch that something happened; TornWatch can only ask Torn what is currently true. This single fact is load-bearing for every feature in this spec, so it is stated explicitly here.
+
+The consequence: anything that must be correct cannot depend on a Signal arriving. A Signal in TornWatch can only ever originate from a component that TornWatch itself builds (e.g. a future browser extension that watches in-game actions locally, or a Discord command), and such a source is optional, may not exist yet, may be down, and can be bypassed entirely (for example, the player acting on their phone, which a desktop browser extension cannot see). Therefore:
+
+- Polling Torn on a timer is the source of truth and the correctness floor for every feature.
+
+- Signals are purely an optimization layered on top — they let a Workflow re-poll sooner than its scheduled interval when there is reason to, improving responsiveness. They never replace the poll.
+
+- Every feature must remain correct even if zero Signals ever arrive. A Workflow must never be able to wedge indefinitely waiting on a Signal that may never come; any indefinite wait must have a fallback polling timeout.
+
+This principle was discovered the hard way during Phase 1: a Workflow left in the "everything is already full/ready" state waited on a Signal alone (no timeout) and silently wedged overnight, because nothing was generating Signals. The fix — a fallback re-poll interval on that wait — is the concrete application of this principle. See section 5.1.4.
+
 # 5. Feature Specifications
 
 ## 5.1 Personal Cooldown & Timer Notifications
@@ -159,6 +173,16 @@ Most actions — training, taking drugs, using cooldown-driven items — are not
 > **Known near-term risk — Travelling 2.0**
 >
 > Torn announced a major travel system overhaul ("Travelling 2.0") with Phase 2 shipping June 23, 2026, introducing a Travel Inventory that allows some item use abroad (e.g. Xanax usable immediately upon purchase in the UK, South Africa, and Japan), with further phases (including weapons/armor) expected to follow, targeted before Halloween 2026. The travel-bundling behavior in this section is built against the rules as of June 2026 and is expected to need revision once Phase 2 ships and the picture becomes clearer with Phase 3. This is a deliberate, accepted v1 simplifying assumption with a known expiration date, not a permanent design choice.
+
+### 5.1.4 Fallback polling (the correctness floor)
+
+When every tracked stat is already full/ready, there is nothing to count down to, so the Workflow has no natural timer to wait on. It still waits for a Signal (in case the player acts), but per the principle in section 4.2, that wait must also have a fallback timeout so it can never wedge indefinitely waiting on a Signal that may never arrive.
+
+- In this state the Workflow waits on a Signal OR a 5-minute fallback, whichever comes first, then re-polls.
+
+- 5 minutes is a deliberate balance: long enough to avoid pointless polling while genuinely idle and full, short enough that a change made without a Signal (e.g. the player acted on their phone, bypassing any browser extension) is detected reasonably promptly. The interval is cheap relative to the 100-request/minute rate limit.
+
+- This fallback is permanent infrastructure, not a stopgap to be removed once a Signal source (browser extension) exists — the extension is an optimization that speeds detection, while this fallback remains the floor that guarantees correctness even when no Signal arrives.
 
 ## 5.2 Faction Chain Watcher
 
@@ -228,7 +252,11 @@ FFScouter is a free, established third-party tool that estimates a player's batt
 
 - The queue, the Chain Leader set, and the countdown deadline are all state held inside a single Chain Watcher Workflow Execution per active chain — not a separate database — since this state only needs to exist while the chain is active.
 
-- Joining, leaving, hitting, and declaring Chain Leader status are all modeled as Signals into the running Workflow.
+- Per section 4.2, polling is authoritative here, and the chain's own short timeout sets the cadence: while a chain is live, the Workflow polls Torn's faction chain endpoint on a tight interval (e.g. every 30 seconds) to know the true chain timer and hit count, rather than trusting player- or bot-reported hits to be complete. This is a bounded, intense polling window that only runs while a chain is active, not 24/7.
+
+- Hit reports (from a player, the Discord bot, or a future browser extension) are modeled as Signals — but per section 4.2 they are an optimization for snappier updates between polls, never the source of truth. A 100-person faction cannot be relied upon to report every hit accurately, so the poll is what keeps the chain timer correct.
+
+- Joining, leaving, and declaring Chain Leader status are also modeled as Signals into the running Workflow (these are genuinely player-driven intent, not game state, so Signals are appropriate as the primary mechanism for them).
 
 - A Query exposes current state (time remaining, current queue order, who's flagged as Chain Leader) so the Discord bot and any future dashboard can read live status without disturbing the Workflow.
 
@@ -408,6 +436,7 @@ Torn City is a live, actively-developed game, and some design decisions in this 
 | 8 | Enemy faction actively countering the chain (hospitalizing hitters, contesting targets) | Matching/turn-timing logic needs to treat this as adversarial, not just logistical. Deferred to Phase 2/4. |
 | 9 | Dependency on FFScouter (third-party, not Torn-official) for stat estimates | Accepted trade-off to avoid rebuilding stat estimation from scratch; introduces a second external rate limit/availability profile to design around. |
 | 10 | Travelling 2.0 may invalidate the travel-bundling assumption in 5.1.3 | Deliberately deferred; tracked in section 11 (External Dependency Watch) with a concrete re-check trigger date. |
+| 11 | Total polling volume across many concurrent Workflows could approach the 100-req/min rate limit | Not a concern at current scale (a handful of Workflows), but as faction-wide features and many tracked characters are added, total poll frequency needs to be budgeted against the shared per-user limit. Chain polling (every ~30s while active) is the heaviest; personal monitors are light. Revisit when concurrent Workflow count grows. |
 
 # 13. Immediate Next Steps
 

@@ -69,6 +69,6 @@ export interface Player {
   tornId: number;           // stable, authoritative identifier
   name: string;             // display name for pings/logs
   discordId?: string;       // for the bot to @-mention later
-  estimatedEnergy?: number; // future: energy management / pacing
+  hitsRemaining: number;    // player input while joining
   // future: target assignment, FFScouter stats, etc.
 }

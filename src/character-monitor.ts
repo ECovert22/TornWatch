@@ -16,11 +16,9 @@ const { fetchUpcomingEvents, sendNotification } = proxyActivities<typeof activit
 export async function characterMonitorWorkflow(apiKey: string) {
   let changed = false;
 
-
   setHandler(somethingChangedSignal, () => {
     changed = true;
   });
-
 
   const notified = new Set<string>();
 
@@ -28,7 +26,6 @@ export async function characterMonitorWorkflow(apiKey: string) {
 
   while (true) {
     const events = await fetchUpcomingEvents(apiKey);
-
 
     // FUTURE: on landing, the travel stat fires its own "travel is ready"
     // notification AND the landing summary fires — two messages for one event.
@@ -43,7 +40,6 @@ export async function characterMonitorWorkflow(apiKey: string) {
       if (event.secondsUntil === 0) {
         if (!notified.has(event.name)) {
 
-          
           const suppressedByTravel =
             isTraveling && event.name !== "travel" && event.name !== "drug";
           
@@ -74,10 +70,12 @@ export async function characterMonitorWorkflow(apiKey: string) {
     const countingDown = events.filter((e) => e.secondsUntil > 0);
 
     if (countingDown.length === 0) {
-      // Nothing left to count down to: wait on the signal alone, no timeout.
-      // condition() with no second argument waits indefinitely until the
-      // predicate becomes true.
-      await condition(() => changed);
+      // Nothing left to count down to: we can't only wait on a signal
+      // As torn does not send signals on it's own, a browser extension will 
+      // send signals in the future, but even that is fallable if a player 
+      // goes to a different browser without the extension/phone, therefore
+      // we must also wait 5 minutes to periodically check
+      await condition(() => changed, '5 minutes');
       changed = false;
     } else {
       const soonest = Math.min(...countingDown.map((e) => e.secondsUntil));
@@ -87,6 +85,7 @@ export async function characterMonitorWorkflow(apiKey: string) {
 
       while (wokenBySignal) {
         changed = false;
+        // 60 seconds debounce timer, that way we are not spamming poll requests
         wokenBySignal = await condition(() => changed, `60 seconds`);
       }
       // if the timeout fired instead, we just loop -> re-fetch -> the

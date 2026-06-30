@@ -41,3 +41,53 @@ A running log of notable technical decisions, trade-offs, and judgment calls mad
 **Decision:** Build Phase 1.5 against today's rules rather than trying to anticipate the patch. Tracked explicitly in SPEC.md section 11 (External Dependency Watch) with a concrete re-check trigger (the patch's ship date) rather than left as an implicit assumption.
 
 **Will revisit if:** Travelling 2.0 Phase 2 ships and changes drug-cooldown-while-traveling behavior in supported countries.
+
+---
+
+## 2026-06-24 — Non-determinism error from changing Workflow code mid-execution
+
+**Context:** Added the signal-debounce logic to characterMonitorWorkflow while a Workflow started under the older (pre-debounce) code was still running.
+
+**What happened:** Restarting the Worker with the new code caused the running Workflow to replay its old Event History against the new code. The new code tried to start a 60-second debounce timer that the recorded history had no record of, producing a non-determinism error — Temporal refused to reconcile "code wants to do X" with "history says X never happened."
+
+**Resolution (dev):** Terminated the stale Workflow and started a fresh one. A fresh execution compiles the current code from its first event, so there's no prior history to conflict with.
+
+**Will revisit when:** Before any production deploy where Workflows run for hours (live chains). Need a strategy for evolving Workflow code without breaking in-flight executions — Continue-As-New (to truncate history on long loops) and/or Temporal's versioning/patching APIs.
+
+---
+
+## 2026-06-24 — dotenv belongs at executable entry points, not imported modules
+
+**Context:** sendNotification activity reads DISCORD_WEBHOOK_URL from process.env. It threw "not set" despite the value being present in .env.
+
+**Cause:** dotenv only loads .env into the process that imports "dotenv/config". That import existed in client.ts, but Activities run in the Worker process (entry point worker.ts), which had no such import. In Phase 0 the Worker never read env vars directly, so this only surfaced once an Activity did.
+
+**Decision:** Add `import "dotenv/config"` at the top of worker.ts. General rule adopted: dotenv loads go at each executable entry point (worker.ts, client.ts) — the files actually run — never in imported library modules (activities.ts), since only the entry point can guarantee env loads before anything reads it.
+
+---
+
+## 2026-06-24 — Single shared Activity retry policy (readability over per-Activity tuning)
+
+**Context:** Considered giving sendNotification its own retry policy with a lower maximumAttempts (3) than the fetch's (5), since retrying a notification has different cost/benefit than retrying a read.
+
+**Decision:** Kept one shared proxyActivities retry policy for all Activities. The difference between 3 and 5 attempts for a notification is marginal, and one policy is easier to read and reason about than two. Noted as a cheap (~30 sec) refactor if a real reason to split emerges later.
+
+**Reasoning captured:** Retries are generally beneficial for notifications (they turn transient Discord failures into a single successful delivery); the only duplicate risk is the narrow "succeeded but response lost" window, which is harmless for stat-ready pings.
+
+---
+
+## 2026-06-25 — Polling is the foundation; signals are only an optimization
+
+**Context:** A personal-monitor Workflow wedged overnight in the "everything full/ready" state — it was waiting on a Signal with no timeout, and since nothing was sending signals (the only signal source today is manual via the Temporal UI), it waited forever. A manual signal un-stuck it.
+
+**Investigation:** Confirmed Torn's API is strictly pull-based — no webhooks, events, or websockets. Torn never pushes; code can only ask what's currently true. (Even established tools like Torn PDA work by polling.) Therefore a Signal can only ever come from an optional component we build (browser extension, Discord command), which may not exist, may be down, or may be bypassed (player acting on their phone, invisible to a desktop extension).
+
+**Decision / principle adopted:** Polling on a timer is the source of truth and correctness floor for every feature. Signals are purely an optimization to re-poll sooner. Every feature must stay correct with zero signals, and no indefinite wait is allowed without a fallback polling timeout.
+
+**Immediate fix:** The "nothing counting down" branch now waits on a signal OR a 5-minute fallback, whichever comes first, then re-polls. 5 min balances staleness vs. pointless polling while idle/full; cheap against the 100-req/min limit.
+
+**Downstream consequences:**
+- Chain tracker must actively poll the faction chain endpoint (~30s) while a chain is live; player/bot hit-reports are optimization signals, not source of truth (a 100-person faction can't be trusted to self-report every hit).
+- The debounce built in Phase 1 is correct but premature — it handles bursts from a signal source (browser extension) that doesn't exist yet. Kept as-is for now since it's harmless and will be correct once that source exists.
+
+**Will revisit when:** total polling volume across many concurrent Workflows grows enough to need budgeting against the rate limit.

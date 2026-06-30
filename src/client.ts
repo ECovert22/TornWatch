@@ -2,7 +2,7 @@
 import "dotenv/config";
 
 import { Connection, Client } from "@temporalio/client";
-import { characterMonitorWorkflow } from "./workflows";
+import { characterMonitorWorkflow } from "./character-monitor";
 
 async function run() {
   const apiKey = process.env.TORN_API_KEY;

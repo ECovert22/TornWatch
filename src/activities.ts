@@ -6,18 +6,9 @@
 // history after a crash. Activities are the escape hatch for all of that.
 
 
-export interface TornUserBasic {
-  player_id: number;
-  name: string;
-  level: number;
-}
+import { TornApiError, TornBarsTravelCooldowns, TornChainState, UpcomingEvent, TornUserBasic } from "./types";
 
-export interface TornApiError {
-  error: {
-    code: number;
-    error: string;
-  };
-}
+
 
 const TORN_API_BASE = "https://api.torn.com/v2";
 
@@ -35,42 +26,6 @@ export async function fetchUserBasic(apiKey: string): Promise<TornUserBasic> {
 }
 
 
-interface TornBar {
-  current: number;
-  maximum: number;
-  increment: number;
-  interval: number;
-  tick_time: number;
-  full_time: number;
-}
-
-interface TornTravel {
-  destination: string;
-  method: string;
-  departed_at: number;
-  arrival_at: number;
-  time_left: number;
-}
-
-interface TornCooldowns {
-  drug: number;
-  medical: number;
-  booster: number;
-}
-
-interface TornBarsTravelCooldowns {
-  bars: {
-    energy: TornBar;
-    nerve: TornBar;
-  };
-  travel: TornTravel;
-  cooldowns: TornCooldowns;
-}
-
-export interface UpcomingEvent {
-  name: string;        // e.g. "energy", "nerve", "travel", "drug"
-  secondsUntil: number;
-}
 
 export async function fetchUpcomingEvents(
   apiKey: string
@@ -100,31 +55,36 @@ export async function fetchUpcomingEvents(
 
 
 export async function sendNotification(message: string): Promise<void> {
-  // LEARNING NOTE (delete once understood):
-  // The webhook URL is a secret (anyone with it can post to your channel),
-  // so it's read from the environment, never hardcoded. process.env is the
-  // same mechanism your API key uses. We read it INSIDE the activity (not at
-  // import time) so a missing/changed value is caught when actually used.
+
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   if (!webhookUrl) {
     throw new Error("DISCORD_WEBHOOK_URL is not set in the environment.");
   }
 
-  // LEARNING NOTE: a Discord webhook expects a POST with JSON body { content }.
-  // This is the same fetch() shape as the Torn call, but with method/headers/
-  // body specified because we're SENDING data, not just GETting it.
   const response = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content: message }),
   });
 
-  // LEARNING NOTE: Discord returns a 2xx status on success and doesn't send
-  // back useful JSON for a normal webhook post, so unlike the Torn activity
-  // we check the HTTP status code rather than parsing the body for an "error"
-  // field. Throwing here lets Temporal's retry policy handle transient
-  // failures (e.g. Discord briefly unreachable).
+
   if (!response.ok) {
     throw new Error(`Discord webhook failed: HTTP ${response.status}`);
   }
+}
+
+
+
+export async function fetchChainState(apiKey: string): Promise<TornChainState> {
+  const url = `${TORN_API_BASE}/faction?selections=chain&key=${apiKey}`;
+
+  const response = await fetch(url);
+  const data = (await response.json()) as { chain: TornChainState } | TornApiError;
+
+  if ("error" in data) {
+    throw new Error(`Torn API error ${data.error.code}: ${data.error.error}`);
+  }
+
+
+  return data.chain;
 }
