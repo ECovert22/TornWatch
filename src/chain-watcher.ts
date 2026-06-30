@@ -2,6 +2,7 @@ import {
   proxyActivities,
   defineSignal,
   setHandler,
+  defineQuery,
   condition,
 } from "@temporalio/workflow";
 import type * as activities from "./activities";
@@ -22,21 +23,25 @@ const joinSignal = defineSignal<[Player]>("join");
 const leaveSignal = defineSignal<[number]>("leave");
 const hitConfirmSignal = defineSignal<[number]>("hitConfirm");
 
+// --- Query definition (output: something the outside world reads OUT) ---
+const getQueueQuery = defineQuery<Player[]>("getQueue");
+
 export async function chainWatcherWorkflow(apiKey: string) {
   // --- State ---
   const queue: Player[] = [];
   let changed = false;
   let lastSeenCurrent = 0;
 
+  // --- Query handler: return the current queue (front = whose turn) ---
+  setHandler(getQueueQuery, () => queue);
+
   // --- Signal handlers ---
   setHandler(joinSignal, (player: Player) => {
-    // push to back of the rotation
-    queue.push(player);
+    queue.push(player); // back of the queue
     changed = true;
   });
 
   setHandler(leaveSignal, (tornId: number) => {
-    // remove the matching player, if present
     const index = queue.findIndex((p) => p.tornId === tornId);
     if (index !== -1) {
       queue.splice(index, 1);
@@ -44,21 +49,24 @@ export async function chainWatcherWorkflow(apiKey: string) {
     changed = true;
   });
 
- 
   setHandler(hitConfirmSignal, (tornId: number) => {
     const index = queue.findIndex((p) => p.tornId === tornId);
     if (index !== -1) {
-        const player = queue[index];
-        queue.splice(index,1);
-        player.hitsRemaining-=1;
-
-        if (player.hitsRemaining !== 0) {
-            queue.push(player); //readd player if they still have hits
-            // NOTE SEND A PING CONFIRMING THEY LEFT THE QUEUE IN THE FUTURE
-        }
+      const player = queue[index];
+      player.hitsRemaining -= 1;
+      queue.splice(index, 1); 
+      if (player.hitsRemaining > 0) {
+        queue.push(player); // only adds when player has hits
+        // somehow notify player of this change
+      }
     }
     changed = true;
   });
 
-  // (polling loop comes in piece 2)
+  // --- Polling loop comes in piece 2 ---
+  // TEMPORARY: park here so the workflow stays alive for signal/query testing
+  // via the Temporal UI. condition(() => false) never resolves, so it waits
+  // indefinitely. This entire wait gets replaced by the real polling loop in
+  // piece 2.
+  await condition(() => false);
 }
